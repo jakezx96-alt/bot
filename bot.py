@@ -17,6 +17,8 @@ dp = Dispatcher()
 os.makedirs("downloads", exist_ok=True)
 
 def search_tracks(query: str, limit: int = 5) -> list[dict]:
+    query = query.strip()
+    
     ydl_opts = {
         "quiet": True,
         "extract_flat": True,
@@ -25,9 +27,21 @@ def search_tracks(query: str, limit: int = 5) -> list[dict]:
     if os.path.exists(COOKIE_FILE):
         ydl_opts["cookiefile"] = COOKIE_FILE
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        return info.get("entries", []) if info else []
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            entries = info.get("entries", []) if info else []
+            
+            # Если по короткому или точному запросу ничего нет, пробуем добавить "song"
+            if not entries and len(query) < 15:
+                fallback_query = f"{query} song"
+                info = ydl.extract_info(fallback_query, download=False)
+                entries = info.get("entries", []) if info else []
+                
+            return entries
+    except Exception as e:
+        print(f"Ошибка поиска: {e}")
+        return []
 
 def download_track(video_id: str) -> str:
     url = f"https://www.youtube.com/watch?v={video_id}"
@@ -56,7 +70,7 @@ async def handle_search(message: types.Message):
     tracks = search_tracks(query, limit=5)
     
     if not tracks:
-        await message.answer("Ничего не найдено. Попробуй другой запрос.")
+        await message.answer("Ничего не найдено. Попробуй указать исполнителя и название трека более точно.")
         await waiting_msg.delete()
         return
 
@@ -102,7 +116,7 @@ async def start_web_server():
 
 async def main():
     if not os.path.exists(COOKIE_FILE):
-        print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку 'Sign in to confirm...'")
+        print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку.")
     
     await start_web_server()
     await dp.start_polling(bot)
