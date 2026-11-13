@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiohttp import web
 
 # --- НАСТРОЙКИ ---
-TOKEN = os.environ["BOT_TOKEN"]  # задаётся в переменных окружения, не в коде
+TOKEN = os.environ["8936358808:AAE__GPtgV-2UpuXYE-cTm8gv73Dzh5elzA"]  # задаётся в переменных окружения, не в коде
 COOKIES_FILE = os.environ.get("COOKIES_FILE")  # необязательно: cookies.txt для YouTube
 DOWNLOAD_DIR = "downloads"
 MAX_DURATION = 15 * 60  # секунд
