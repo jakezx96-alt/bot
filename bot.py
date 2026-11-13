@@ -1,134 +1,105 @@
-import asyncio
 import os
-import yt_dlp
-from aiogram import Bot, Dispatcher, F, types
+import asyncio
+import logging
+from aiohttp import web
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import yt_dlp
 
-# === НАСТРОЙКИ ===
-TOKEN = "8936358808:AAE__GPtgV-2UpuXYE-cTm8gv73Dzh5elzA"
-COOKIE_FILE = "cookies.txt"  # Файл куки должен лежать рядом со скриптом
+BOT_TOKEN = "8936358808:AAE__GPtgV-2UpuXYE-cTm8gv73Dzh5elzA"
 
-bot = Bot(token=TOKEN)
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Общие настройки для yt-dlp (с поддержкой cookies.txt)
-ydl_base_opts = {
-    'quiet': True,
-    'noplaylist': True,
-}
-if os.path.exists(COOKIE_FILE):
-    ydl_base_opts['cookiefile'] = COOKIE_FILE
+os.makedirs("downloads", exist_ok=True)
 
-# Настройки для быстрого поиска 10 треков
-YDL_SEARCH_OPTS = {
-    **ydl_base_opts,
-    'format': 'bestaudio/best',
-    'extract_flat': True,
-}
+def search_tracks(query: str, limit: int = 5) -> list[dict]:
+    ydl_opts = {
+        "quiet": True,
+        "extract_flat": True,
+        "default_search": f"ytsearch{limit}",
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(query, download=False)
+        return info.get("entries", []) if info else []
 
-# Настройки для скачивания выбранного трека
-YDL_DOWNLOAD_OPTS = {
-    **ydl_base_opts,
-    'format': 'bestaudio/best',
-    'outtmpl': 'downloads/%(id)s.%(ext)s',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-}
-
+def download_track(video_id: str) -> str:
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    output_template = f"downloads/{video_id}.%(ext)s"
+    ydl_opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "outtmpl": output_template,
+        "quiet": True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
 
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    await message.answer(
-        "🎵 Привет! Отправь мне название трека или имя исполнителя, "
-        "и я найду 10 вариантов."
-    )
+async def start_cmd(message: types.Message):
+    await message.answer("Привет! Отправь мне название песни или имя исполнителя, и я найду трек на YouTube.")
 
-
-@dp.message(F.text)
-async def search_music(message: types.Message):
+@dp.message()
+async def handle_search(message: types.Message):
     query = message.text
-    wait_msg = await message.answer("🔍 Ищу 10 вариантов музыки...")
-
-    def _search():
-        with yt_dlp.YoutubeDL(YDL_SEARCH_OPTS) as ydl:
-            try:
-                # Ищем 10 результатов на YouTube
-                info = ydl.extract_info(f"ytsearch10:{query}", download=False)
-                return info.get('entries', [])
-            except Exception as e:
-                print(f"Ошибка поиска: {e}")
-                return []
-
-    entries = await asyncio.to_thread(_search)
-
-    if not entries:
-        await wait_msg.edit_text("Ничего не найдено или произошла ошибка 😔 (проверь cookies.txt)")
+    waiting_msg = await message.answer("🔍 Ищу трек...")
+    
+    tracks = search_tracks(query, limit=5)
+    
+    if not tracks:
+        await message.answer("Ничего не найдено. Попробуй другой запрос.")
+        await waiting_msg.delete()
         return
 
-    keyboard = []
-    for entry in entries:
-        title = entry.get('title', 'Без названия')[:45]  # Обрезаем длинные названия
-        duration = entry.get('duration')
-        
-        if duration:
-            mins, secs = divmod(int(duration), 60)
-            dur_str = f"{mins}:{secs:02d}"
-        else:
-            dur_str = "?:??"
+    keyboard_buttons = []
+    for track in tracks:
+        title = track.get("title", "Трек")
+        video_id = track.get("id")
+        if video_id:
+            keyboard_buttons.append([InlineKeyboardButton(text=title, callback_data=f"dl_{video_id}")])
 
-        video_id = entry.get('id')
-        if not video_id:
-            continue
-
-        btn_text = f"🎶 {title} ({dur_str})"
-        # В callback_data передаем ID трека
-        keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_{video_id}")])
-
-    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    await wait_msg.edit_text("Вот что удалось найти, выбери нужный трек:", reply_markup=markup)
-
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    await message.answer("Вот что удалось найти:", reply_markup=keyboard)
+    await waiting_msg.delete()
 
 @dp.callback_query(F.data.startswith("dl_"))
-async def download_music(callback: types.CallbackQuery):
-    video_id = callback.data.split("_", 1)[1]
-    url = f"https://www.youtube.com/watch?v={video_id}"
+async def handle_download(callback: types.CallbackQuery):
+    video_id = callback.data.split("_")[1]
+    await callback.message.answer("📥 Скачиваю музыку...")
     
-    await callback.answer("Скачиваю трек...")
-    status_msg = await callback.message.answer("⏳ Скачиваю и конвертирую в MP3, подожди немного...")
-
-    os.makedirs("downloads", exist_ok=True)
-
-    def _download():
-        with yt_dlp.YoutubeDL(YDL_DOWNLOAD_OPTS) as ydl:
-            info = ydl.extract_info(url, download=True)
-            file_path = f"downloads/{video_id}.mp3"
-            title = info.get('title', 'Track')
-            return file_path, title
-
     try:
-        file_path, title = await asyncio.to_thread(_download)
+        file_path = download_track(video_id)
+        audio = types.FSInputFile(file_path)
+        await callback.message.answer_audio(audio)
         
-        if not os.path.exists(file_path):
-            raise FileNotFoundError("Файл MP3 не был создан.")
-
-        audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
-        await callback.message.answer_audio(audio=audio_file, title=title)
-        await status_msg.delete()
-        
-        # Удаляем файл с диска после успешной отправки
         if os.path.exists(file_path):
             os.remove(file_path)
-            
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка при скачивании: {e}")
+        await callback.message.answer(f"Произошла ошибка при скачивании: {e}")
+    
+    await callback.answer()
 
+# --- Заглушка веб-сервера для бесплатного Render ---
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
 
 async def main():
-    if not os.path.exists(COOKIE_FILE):
+    await start_web_server()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
         print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку 'Sign in to confirm...'")
     print("Бот запущен и готов к работе...")
     await dp.start_polling(bot)
