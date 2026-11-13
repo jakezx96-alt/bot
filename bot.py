@@ -32,7 +32,9 @@ download_sem = asyncio.Semaphore(2)
 def base_opts() -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
-        opts["cookiefile"] = COOKIES_FILE
+    import shutil
+    shutil.copy(COOKIES_FILE, "/tmp/cookies.txt")
+    opts["cookiefile"] = "/tmp/cookies.txt"
     return opts
 
 
