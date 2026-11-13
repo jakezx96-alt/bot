@@ -21,6 +21,8 @@ def get_ydl_opts(extra_opts=None):
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
+        # Свежие параметры для эмуляции клиента и обхода капч YouTube
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
@@ -31,7 +33,7 @@ def get_ydl_opts(extra_opts=None):
 def search_tracks(query: str, limit: int = 5) -> list[dict]:
     query = query.strip()
     
-    # Если скинули прямую ссылку на YouTube
+    # Прямая ссылка
     if query.startswith(("http://", "https://")):
         try:
             with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
@@ -44,29 +46,19 @@ def search_tracks(query: str, limit: int = 5) -> list[dict]:
             print(f"Ошибка ссылки: {e}")
         return []
 
-    # Ищем через поисковик DuckDuckGo, чтобы Render не ловил капчу и блокировки от YouTube
+    # Поиск по названию через ytsearch с обновленным клиентом
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "default_search": f"ddgsearch{limit}",
+        "default_search": f"ytsearch{limit}",
     })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"site:youtube.com {query}", download=False)
+            info = ydl.extract_info(query, download=False)
             entries = info.get("entries", []) if info else []
-            
-            results = []
-            for e in entries:
-                if e and "url" in e:
-                    url = e["url"]
-                    if "v=" in url:
-                        v_id = url.split("v=")[1].split("&")[0]
-                    else:
-                        v_id = url.split("/")[-1]
-                    results.append({"title": e.get("title", "Трек"), "id": v_id})
-            return results[:limit]
+            return [{"title": e.get("title", "Трек"), "id": e.get("id")} for e in entries if e]
     except Exception as e:
-        print(f"Ошибка поиска через ddg: {e}")
+        print(f"Ошибка поиска: {e}")
         return []
 
 def download_track(video_id: str) -> str:
@@ -99,7 +91,7 @@ async def handle_search(message: types.Message):
     tracks = search_tracks(query, limit=5)
     
     if not tracks:
-        await message.answer("Ничего не найдено. Попробуй написать название точнее или скинуть ссылку.")
+        await message.answer("Ничего не найдено. Попробуй написать название точнее.")
         await waiting_msg.delete()
         return
 
