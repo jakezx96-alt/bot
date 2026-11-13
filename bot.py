@@ -21,7 +21,6 @@ def get_ydl_opts(extra_opts=None):
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
-        # Свежие параметры для эмуляции клиента и обхода капч YouTube
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if os.path.exists(COOKIE_FILE):
@@ -33,7 +32,7 @@ def get_ydl_opts(extra_opts=None):
 def search_tracks(query: str, limit: int = 5) -> list[dict]:
     query = query.strip()
     
-    # Прямая ссылка
+    # Если скинули прямую ссылку на YouTube
     if query.startswith(("http://", "https://")):
         try:
             with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
@@ -46,7 +45,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict]:
             print(f"Ошибка ссылки: {e}")
         return []
 
-    # Поиск по названию через ytsearch с обновленным клиентом
+    # Поиск по названию
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
         "default_search": f"ytsearch{limit}",
@@ -70,8 +69,10 @@ def download_track(video_id: str) -> str:
         safe_name = video_id
 
     output_template = f"downloads/{safe_name}.%(ext)s"
+    
+    # Используем универсальный формат, чтобы yt-dlp сам выбирал лучший доступный аудиопоток
     ydl_opts = get_ydl_opts({
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio/best",
         "outtmpl": output_template,
     })
 
