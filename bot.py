@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
 BOT_TOKEN = "8936358808:AAE__GPtgV-2UpuXYE-cTm8gv73Dzh5elzA"
+COOKIE_FILE = "cookies.txt"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -21,6 +22,9 @@ def search_tracks(query: str, limit: int = 5) -> list[dict]:
         "extract_flat": True,
         "default_search": f"ytsearch{limit}",
     }
+    if os.path.exists(COOKIE_FILE):
+        ydl_opts["cookiefile"] = COOKIE_FILE
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
         return info.get("entries", []) if info else []
@@ -33,6 +37,9 @@ def download_track(video_id: str) -> str:
         "outtmpl": output_template,
         "quiet": True,
     }
+    if os.path.exists(COOKIE_FILE):
+        ydl_opts["cookiefile"] = COOKIE_FILE
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
@@ -81,7 +88,6 @@ async def handle_download(callback: types.CallbackQuery):
     
     await callback.answer()
 
-# --- Заглушка веб-сервера для бесплатного Render ---
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
@@ -95,15 +101,14 @@ async def start_web_server():
     await site.start()
 
 async def main():
+    if not os.path.exists(COOKIE_FILE):
+        print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку 'Sign in to confirm...'")
+    
     await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-        print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку 'Sign in to confirm...'")
-    print("Бот запущен и готов к работе...")
-    await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
