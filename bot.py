@@ -32,9 +32,12 @@ download_sem = asyncio.Semaphore(2)
 def base_opts() -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
-    import shutil
-    shutil.copy(COOKIES_FILE, "/tmp/cookies.txt")
-    opts["cookiefile"] = "/tmp/cookies.txt"
+        # Secret Files на Render только для чтения, а yt-dlp может обновлять cookies,
+        # поэтому работаем с копией во временной папке
+        tmp_cookies = "/tmp/cookies.txt"
+        if not os.path.exists(tmp_cookies):
+            shutil.copy(COOKIES_FILE, tmp_cookies)
+        opts["cookiefile"] = tmp_cookies
     return opts
 
 
