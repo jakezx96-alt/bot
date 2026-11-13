@@ -17,13 +17,10 @@ dp = Dispatcher()
 os.makedirs("downloads", exist_ok=True)
 
 def get_ydl_opts(extra_opts=None):
-    """Базовые настройки yt-dlp с маскировкой под браузер для обхода блокировок Render"""
     opts = {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
@@ -40,34 +37,41 @@ def search_tracks(query: str, limit: int = 5) -> list[dict]:
             with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
                 info = ydl.extract_info(query, download=False)
                 if info:
-                    # Если это плейлист или видео
                     if "entries" in info:
                         return [{"title": e.get("title", "Трек"), "id": e.get("id")} for e in info["entries"] if e][:limit]
                     return [{"title": info.get("title", "Трек"), "id": info.get("id") or query}]
         except Exception as e:
-            print(f"Ошибка обработки ссылки: {e}")
+            print(f"Ошибка ссылки: {e}")
         return []
 
-    # Обычный поиск по названию
+    # Ищем через поисковик DuckDuckGo, чтобы Render не ловил капчу и блокировки от YouTube
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "default_search": f"ytsearch{limit}",
+        "default_search": f"ddgsearch{limit}",
     })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=False)
+            info = ydl.extract_info(f"site:youtube.com {query}", download=False)
             entries = info.get("entries", []) if info else []
-            return [{"title": e.get("title", "Трек"), "id": e.get("id")} for e in entries if e]
+            
+            results = []
+            for e in entries:
+                if e and "url" in e:
+                    url = e["url"]
+                    if "v=" in url:
+                        v_id = url.split("v=")[1].split("&")[0]
+                    else:
+                        v_id = url.split("/")[-1]
+                    results.append({"title": e.get("title", "Трек"), "id": v_id})
+            return results[:limit]
     except Exception as e:
-        print(f"Ошибка поиска: {e}")
+        print(f"Ошибка поиска через ddg: {e}")
         return []
 
 def download_track(video_id: str) -> str:
-    # Если передали полную ссылку вместо ID
     if video_id.startswith(("http://", "https://")):
         url = video_id
-        # Извлекаем ID или используем хэш для имени файла
         safe_name = abs(hash(url))
     else:
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -90,12 +94,12 @@ async def start_cmd(message: types.Message):
 @dp.message()
 async def handle_search(message: types.Message):
     query = message.text
-    waiting_msg = await message.answer("🔍 Ищу трек на YouTube...")
+    waiting_msg = await message.answer("🔍 Ищу трек...")
     
     tracks = search_tracks(query, limit=5)
     
     if not tracks:
-        await message.answer("Ничего не найдено. Попробуй написать точнее или скинуть ссылку.")
+        await message.answer("Ничего не найдено. Попробуй написать название точнее или скинуть ссылку.")
         await waiting_msg.delete()
         return
 
@@ -104,7 +108,6 @@ async def handle_search(message: types.Message):
         title = track.get("title", "Трек")
         v_id = track.get("id")
         if v_id:
-            # Обрезаем слишком длинные названия для кнопок
             btn_text = title[:50] + "..." if len(title) > 50 else title
             keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_{v_id}")])
 
@@ -114,7 +117,7 @@ async def handle_search(message: types.Message):
 
 @dp.callback_query(F.data.startswith("dl_"))
 async def handle_download(callback: types.CallbackQuery):
-    video_id = callback.data[3:]  # достаем ID трека
+    video_id = callback.data[3:]
     await callback.message.answer("📥 Скачиваю аудио...")
     
     try:
@@ -146,5 +149,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
     asyncio.run(main())
