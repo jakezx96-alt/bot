@@ -16,43 +16,68 @@ dp = Dispatcher()
 
 os.makedirs("downloads", exist_ok=True)
 
+def get_ydl_opts(extra_opts=None):
+    """Базовые настройки yt-dlp с маскировкой под браузер для обхода блокировок Render"""
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "nocheckcertificate": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    if os.path.exists(COOKIE_FILE):
+        opts["cookiefile"] = COOKIE_FILE
+    if extra_opts:
+        opts.update(extra_opts)
+    return opts
+
 def search_tracks(query: str, limit: int = 5) -> list[dict]:
     query = query.strip()
     
-    ydl_opts = {
-        "quiet": True,
+    # Если скинули прямую ссылку на YouTube
+    if query.startswith(("http://", "https://")):
+        try:
+            with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
+                info = ydl.extract_info(query, download=False)
+                if info:
+                    # Если это плейлист или видео
+                    if "entries" in info:
+                        return [{"title": e.get("title", "Трек"), "id": e.get("id")} for e in info["entries"] if e][:limit]
+                    return [{"title": info.get("title", "Трек"), "id": info.get("id") or query}]
+        except Exception as e:
+            print(f"Ошибка обработки ссылки: {e}")
+        return []
+
+    # Обычный поиск по названию
+    ydl_opts = get_ydl_opts({
         "extract_flat": True,
         "default_search": f"ytsearch{limit}",
-    }
-    if os.path.exists(COOKIE_FILE):
-        ydl_opts["cookiefile"] = COOKIE_FILE
+    })
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
             entries = info.get("entries", []) if info else []
-            
-            # Если по короткому или точному запросу ничего нет, пробуем добавить "song"
-            if not entries and len(query) < 15:
-                fallback_query = f"{query} song"
-                info = ydl.extract_info(fallback_query, download=False)
-                entries = info.get("entries", []) if info else []
-                
-            return entries
+            return [{"title": e.get("title", "Трек"), "id": e.get("id")} for e in entries if e]
     except Exception as e:
         print(f"Ошибка поиска: {e}")
         return []
 
 def download_track(video_id: str) -> str:
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    output_template = f"downloads/{video_id}.%(ext)s"
-    ydl_opts = {
+    # Если передали полную ссылку вместо ID
+    if video_id.startswith(("http://", "https://")):
+        url = video_id
+        # Извлекаем ID или используем хэш для имени файла
+        safe_name = abs(hash(url))
+    else:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        safe_name = video_id
+
+    output_template = f"downloads/{safe_name}.%(ext)s"
+    ydl_opts = get_ydl_opts({
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
-        "quiet": True,
-    }
-    if os.path.exists(COOKIE_FILE):
-        ydl_opts["cookiefile"] = COOKIE_FILE
+    })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -60,26 +85,28 @@ def download_track(video_id: str) -> str:
 
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
-    await message.answer("Привет! Отправь мне название песни или имя исполнителя, и я найду трек на YouTube.")
+    await message.answer("🎵 Привет! Отправь мне название песни или ссылку на YouTube, и я найду и скачаю трек.")
 
 @dp.message()
 async def handle_search(message: types.Message):
     query = message.text
-    waiting_msg = await message.answer("🔍 Ищу трек...")
+    waiting_msg = await message.answer("🔍 Ищу трек на YouTube...")
     
     tracks = search_tracks(query, limit=5)
     
     if not tracks:
-        await message.answer("Ничего не найдено. Попробуй указать исполнителя и название трека более точно.")
+        await message.answer("Ничего не найдено. Попробуй написать точнее или скинуть ссылку.")
         await waiting_msg.delete()
         return
 
     keyboard_buttons = []
     for track in tracks:
         title = track.get("title", "Трек")
-        video_id = track.get("id")
-        if video_id:
-            keyboard_buttons.append([InlineKeyboardButton(text=title, callback_data=f"dl_{video_id}")])
+        v_id = track.get("id")
+        if v_id:
+            # Обрезаем слишком длинные названия для кнопок
+            btn_text = title[:50] + "..." if len(title) > 50 else title
+            keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_{v_id}")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     await message.answer("Вот что удалось найти:", reply_markup=keyboard)
@@ -87,8 +114,8 @@ async def handle_search(message: types.Message):
 
 @dp.callback_query(F.data.startswith("dl_"))
 async def handle_download(callback: types.CallbackQuery):
-    video_id = callback.data.split("_")[1]
-    await callback.message.answer("📥 Скачиваю музыку...")
+    video_id = callback.data[3:]  # достаем ID трека
+    await callback.message.answer("📥 Скачиваю аудио...")
     
     try:
         file_path = download_track(video_id)
@@ -115,14 +142,9 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    if not os.path.exists(COOKIE_FILE):
-        print(f"⚠️ ВНИМАНИЕ: Файл '{COOKIE_FILE}' не найден! YouTube может выдавать ошибку.")
-    
     await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-if __name__ == "__main__":
     asyncio.run(main())
